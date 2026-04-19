@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Tryx Panorama
+GenericName=AIO LCD Controller
+Comment=Control the Tryx Panorama AIO cooler display
+Exec=tryx-panorama
+Icon=video-display
+Terminal=false
+Categories=Utility;System;
+Keywords=Tryx;Panorama;AIO;cooler;LCD;
+StartupNotify=false

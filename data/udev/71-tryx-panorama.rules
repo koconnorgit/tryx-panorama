@@ -1,0 +1,11 @@
+# Tryx Panorama AIO LCD display
+# Match Google AOA VID/PID + Rockchip product "cm01" to avoid false-positives on
+# other Android Open Accessory devices that share 18d1:2d03.
+
+# CDC-ACM serial interface (display control channel)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="18d1", ATTRS{idProduct}=="2d03", ATTRS{product}=="cm01", \
+    TAG+="uaccess", GROUP="uucp", MODE="0660", SYMLINK+="tryx-panorama"
+
+# USB device (for libusb / adb file transfer)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="18d1", ATTRS{idProduct}=="2d03", ATTRS{product}=="cm01", \
+    TAG+="uaccess", GROUP="uucp", MODE="0660"

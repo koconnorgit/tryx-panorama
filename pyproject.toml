@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tryx-panorama"
+version = "0.1.0"
+description = "System tray GUI for Tryx Panorama AIO LCD displays on Linux"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "PySide6>=6.5",
+]
+
+[project.scripts]
+tryx-panorama = "tryx_panorama.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tryx_panorama = ["resources/*.svg"]

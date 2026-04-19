@@ -1,0 +1,15 @@
+[Unit]
+Description=Tryx Panorama AIO display keepalive daemon
+Documentation=https://github.com/fadli0029/reed-tpse
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@REED_TPSE_BIN@ daemon start --foreground
+Restart=on-failure
+RestartSec=10
+# Keepalive only makes sense while a graphical session is active (udev uaccess
+# grants /dev/ttyACM* to that user). Stop cleanly on session teardown.
+
+[Install]
+WantedBy=default.target
