@@ -43,29 +43,34 @@ Runtime:
 ## Install
 
 ```bash
-# 0. Build and install reed-tpse first (see its README).
-#    This project assumes the binary is on $PATH or at a known location.
-
-# 1. udev rule — grants /dev/ttyACM* + the USB device to the active session
-#    user, so no `uucp` group membership required.
-./scripts/install-udev.sh            # requires sudo once
-
-# 2. systemd --user service template for the keepalive daemon
-./scripts/install-service.sh         # no sudo; writes ~/.config/systemd/user/
-
-# 3. Put a launcher on $PATH
-install -m 0755 - ~/.local/bin/tryx-panorama <<'EOF'
-#!/usr/bin/env bash
-exec python -c 'import sys; sys.path.insert(0, "REPO_PATH/src"); from tryx_panorama.app import main; raise SystemExit(main())' "$@"
-EOF
-# Substitute REPO_PATH above for the absolute path to this repo.
-
-# 4. (Optional) .desktop launcher for the KDE app menu
-install -m 0644 data/tryx-panorama.desktop ~/.local/share/applications/
-
-# 5. Enable the daemon on login
-systemctl --user enable --now tryx-panorama.service
+./scripts/install.sh
 ```
+
+That single command:
+
+1. Checks for runtime/build dependencies (and prints the right `pacman` /
+   `apt` command if anything's missing — doesn't auto-install them).
+2. Clones + builds [reed-tpse](https://github.com/fadli0029/reed-tpse) into
+   `~/.local/share/tryx-panorama/reed-tpse` and drops the binary at
+   `~/.local/bin/reed-tpse`.
+3. Installs the udev rule (`/etc/udev/rules.d/71-tryx-panorama.rules`) —
+   prompts for `sudo` once.
+4. Installs the `tryx-panorama.service` systemd **user** unit at
+   `~/.config/systemd/user/`, pointing at the reed-tpse binary it just
+   built.
+5. Installs the `tryx-panorama` launcher wrapper at `~/.local/bin/`.
+6. Installs the `.desktop` entry at `~/.local/share/applications/`.
+7. Enables and starts the daemon.
+
+Re-running `./scripts/install.sh` is safe — it updates reed-tpse from
+upstream via `git pull`, re-applies the rest, and restarts the daemon.
+
+If you prefer to run individual steps, the orchestrator is a thin wrapper
+around:
+
+- `scripts/install-reed-tpse.sh` — just reed-tpse clone + build + install
+- `scripts/install-udev.sh` — just the udev rule
+- `scripts/install-service.sh` — just the systemd user unit
 
 ## Run
 
