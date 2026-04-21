@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Clone, build, and install reed-tpse (by @fadli0029) into ~/.local/bin.
+# Clone, build, and install reed-tpse into ~/.local/bin.
+# Pulls from koconnorgit/reed-tpse (fork of fadli0029/reed-tpse, with a
+# reconnect fix in the keepalive daemon). Override REED_TPSE_REMOTE to
+# point elsewhere.
 # Idempotent: re-running updates an existing clone via `git pull`.
 # Does NOT require sudo.
 set -euo pipefail
 
 REED_SRC_DIR="${REED_TPSE_SRC_DIR:-$HOME/.local/share/tryx-panorama/reed-tpse}"
-REED_REMOTE="${REED_TPSE_REMOTE:-https://github.com/fadli0029/reed-tpse.git}"
+REED_REMOTE="${REED_TPSE_REMOTE:-https://github.com/koconnorgit/reed-tpse.git}"
 INSTALL_BIN="$HOME/.local/bin/reed-tpse"
 
 # Build-time dependency check
@@ -22,6 +25,12 @@ fi
 
 # Clone or fast-forward update
 if [[ -d "$REED_SRC_DIR/.git" ]]; then
+    current_remote="$(git -C "$REED_SRC_DIR" remote get-url origin 2>/dev/null || true)"
+    if [[ -n "$current_remote" && "$current_remote" != "$REED_REMOTE" ]]; then
+        echo "Retargeting origin: $current_remote -> $REED_REMOTE"
+        git -C "$REED_SRC_DIR" remote set-url origin "$REED_REMOTE"
+        git -C "$REED_SRC_DIR" fetch origin
+    fi
     echo "Updating existing reed-tpse clone at $REED_SRC_DIR"
     git -C "$REED_SRC_DIR" pull --ff-only
 else
