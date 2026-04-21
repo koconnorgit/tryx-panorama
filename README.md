@@ -50,8 +50,10 @@ That single command:
 
 1. Checks for runtime/build dependencies (and prints the right `pacman` /
    `apt` command if anything's missing — doesn't auto-install them).
-2. Clones + builds [reed-tpse](https://github.com/fadli0029/reed-tpse) into
-   `~/.local/share/tryx-panorama/reed-tpse` and drops the binary at
+2. Clones + builds [reed-tpse](https://github.com/koconnorgit/reed-tpse)
+   (a fork of [@fadli0029](https://github.com/fadli0029)'s original,
+   see [Which reed-tpse gets installed](#which-reed-tpse-gets-installed))
+   into `~/.local/share/tryx-panorama/reed-tpse` and drops the binary at
    `~/.local/bin/reed-tpse`.
 3. Installs the udev rule (`/etc/udev/rules.d/71-tryx-panorama.rules`) —
    prompts for `sudo` once.
@@ -62,8 +64,9 @@ That single command:
 6. Installs the `.desktop` entry at `~/.local/share/applications/`.
 7. Enables and starts the daemon.
 
-Re-running `./scripts/install.sh` is safe — it updates reed-tpse from
-upstream via `git pull`, re-applies the rest, and restarts the daemon.
+Re-running `./scripts/install.sh` is safe — it updates reed-tpse from its
+configured remote via `git pull`, re-applies the rest, and restarts the
+daemon.
 
 If you prefer to run individual steps, the orchestrator is a thin wrapper
 around:
@@ -71,6 +74,28 @@ around:
 - `scripts/install-reed-tpse.sh` — just reed-tpse clone + build + install
 - `scripts/install-udev.sh` — just the udev rule
 - `scripts/install-service.sh` — just the systemd user unit
+
+### Which reed-tpse gets installed
+
+The installer pulls from
+[**koconnorgit/reed-tpse**](https://github.com/koconnorgit/reed-tpse) by
+default — a fork of
+[fadli0029/reed-tpse](https://github.com/fadli0029/reed-tpse) that adds a
+reconnect loop to the keepalive daemon (upstream silently no-ops on a
+dead serial fd after USB suspend/resume or `/dev/ttyACM*` renumbering, so
+`Restart=on-failure` never fires and the LCD goes blank until the next
+manual restart).
+
+To pull from the upstream repo instead:
+
+```bash
+REED_TPSE_REMOTE=https://github.com/fadli0029/reed-tpse.git ./scripts/install.sh
+```
+
+Any fork URL works — set `REED_TPSE_REMOTE` to point wherever you want.
+If you've previously installed from a different remote, the installer
+retargets the existing clone's `origin` and re-fetches before pulling, so
+switching is a single re-run.
 
 ## Run
 
