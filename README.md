@@ -143,17 +143,34 @@ and deletes are dispatched on `QThread` workers so the UI stays responsive.
 Daemon start/stop/restart go through `systemctl --user` against
 `tryx-panorama.service`, which wraps `reed-tpse daemon start --foreground`.
 
+## System HUD overlay
+
+The GUI exposes the cooler's native telemetry HUD: pick up to 3 metrics
+from the firmware's label set (CPU / GPU temp / usage / freq / voltage,
+motherboard temp, memory, disk temp, date & time), choose one of the 9
+anchor points on a 3×3 placement grid, set the text color, toggle
+CPU/GPU name badges, and set the push interval. Apply writes the config
+via `reed-tpse hud configure` and restarts the keepalive daemon so it
+starts pushing fresh values at the new cadence.
+
+The cooler firmware renders the overlay natively — no host-side frame
+compositing — so the feature is essentially free at the transport
+layer. One caveat surfaced in the UI: **the render order of the
+selected metrics is fixed by the firmware**, not by the order they
+appear in the array we send. The UI shows a note to that effect rather
+than pretending we have an ordering knob.
+
 ## What this does *not* do (yet)
 
 The same things reed-tpse doesn't do yet:
 
-- CPU / GPU / RAM / fan / network telemetry overlays
 - Pump / fan RPM control or ARGB control
-- Custom layout composition
+- Screen Splitting mode (6-metric, two-zone layout)
+- Arbitrary pixel-level overlay placement (firmware only exposes the
+  9 anchor points)
 
 If you want those, watch [reed-tpse](https://github.com/fadli0029/reed-tpse)
-or open an issue there — the rendering pipeline for rasterising telemetry
-into frames is the hard part, not the transport.
+or open an issue there.
 
 ## License
 

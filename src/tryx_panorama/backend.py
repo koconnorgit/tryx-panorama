@@ -37,6 +37,37 @@ class DeviceInfo:
     port: str = ""
 
 
+HUD_LABELS: list[str] = [
+    "CPU Temperature",
+    "CPU Frequency",
+    "CPU Usage",
+    "CPU Voltage",
+    "GPU Temperature",
+    "GPU Frequency",
+    "GPU Usage",
+    "GPU Voltage",
+    "Motherboard Temperature",
+    "Memory Frequency",
+    "Memory Utilization",
+    "Hard Disk Temperature",
+    "Date & Time",
+]
+
+
+@dataclass
+class HudState:
+    enabled: bool = False
+    metrics: list[str] = field(default_factory=list)
+    position: str = "Top"
+    align: str = "Left"
+    color: str = "#FFFFFF"
+    badges: list[str] = field(default_factory=list)  # "CPU Badge", "GPU Badge"
+    push_interval_sec: int = 5
+    temperature_unit: str = "Celsius"
+    cpu_name: str = ""
+    gpu_name: str = ""
+
+
 class BackendError(RuntimeError):
     pass
 
@@ -142,6 +173,49 @@ class Backend:
             capture_output=True, text=True, check=False,
         )
 
+    def hud_configure(
+        self,
+        metrics: list[str],
+        position: str,
+        align: str,
+        color: str,
+        badges: list[str],
+        interval: int,
+        unit: str,
+    ) -> None:
+        """Apply HUD config via `reed-tpse hud configure`. Raises BackendError on failure.
+
+        Badge names are the short forms "cpu" / "gpu" that the CLI accepts.
+        """
+        if not metrics:
+            raise BackendError("Select at least one metric.")
+        if len(metrics) > 3:
+            raise BackendError(f"Firmware allows at most 3 metrics; got {len(metrics)}.")
+        args = [
+            "hud", "configure",
+            "--metrics", ",".join(metrics),
+            "--position", position,
+            "--align", align,
+            "--color", color,
+            "--badges", ",".join(badges) if badges else "none",
+            "--interval", str(interval),
+            "--unit", unit,
+        ]
+        r = self._run(args, timeout=30.0)
+        if r.returncode != 0:
+            raise BackendError(r.stderr.strip() or r.stdout.strip() or "hud configure failed")
+
+    def hud_clear(self) -> None:
+        r = self._run(["hud", "clear"], timeout=15.0)
+        if r.returncode != 0:
+            raise BackendError(r.stderr.strip() or "hud clear failed")
+
+    def hud_status(self) -> HudState:
+        r = self._run(["hud", "status"], timeout=10.0)
+        if r.returncode != 0:
+            raise BackendError(r.stderr.strip() or "hud status failed")
+        return _parse_hud_status(r.stdout)
+
 
 _FIELDS = {
     "Product": "product",
@@ -151,6 +225,56 @@ _FIELDS = {
     "Firmware": "firmware",
     "Hardware": "hardware",
 }
+
+
+_BRACKET_RE = re.compile(r"\[([^\]]+)\]")
+
+
+def _parse_hud_status(stdout: str) -> HudState:
+    """Parse the `hud status` stdout block into a HudState.
+
+    Format (see cli/main.cpp:cmd_hud status branch):
+        HUD: enabled|disabled
+          Metrics: [X] [Y] [Z]            (or "(none)")
+          Position: Top
+          Align: Left
+          Color: #FFFFFF
+          Badges: [CPU Badge] [GPU Badge]  (or "(none)")
+          Push interval: 5s
+          Temperature unit: Celsius
+          CPU: <name> | (auto)
+          GPU: <name> | (auto)
+    """
+    state = HudState()
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("HUD:"):
+            state.enabled = stripped.split(":", 1)[1].strip() == "enabled"
+        elif stripped.startswith("Metrics:"):
+            state.metrics = _BRACKET_RE.findall(stripped)
+        elif stripped.startswith("Position:"):
+            state.position = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("Align:"):
+            state.align = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("Color:"):
+            state.color = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("Badges:"):
+            state.badges = _BRACKET_RE.findall(stripped)
+        elif stripped.startswith("Push interval:"):
+            raw = stripped.split(":", 1)[1].strip().rstrip("s")
+            try:
+                state.push_interval_sec = int(raw)
+            except ValueError:
+                pass
+        elif stripped.startswith("Temperature unit:"):
+            state.temperature_unit = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("CPU:"):
+            val = stripped.split(":", 1)[1].strip()
+            state.cpu_name = "" if val == "(auto)" else val
+        elif stripped.startswith("GPU:"):
+            val = stripped.split(":", 1)[1].strip()
+            state.gpu_name = "" if val == "(auto)" else val
+    return state
 
 
 def _parse_info(stdout: str) -> DeviceInfo:

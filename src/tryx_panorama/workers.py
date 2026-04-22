@@ -56,6 +56,56 @@ class DisplayWorker(_BaseWorker):
         self.finished.emit(True, f"Displaying {', '.join(self.files)}")
 
 
+class HudConfigureWorker(_BaseWorker):
+    def __init__(
+        self,
+        backend: Backend,
+        metrics: list[str],
+        position: str,
+        align: str,
+        color: str,
+        badges: list[str],
+        interval: int,
+        unit: str,
+    ):
+        super().__init__()
+        self.backend = backend
+        self.metrics = metrics
+        self.position = position
+        self.align = align
+        self.color = color
+        self.badges = badges
+        self.interval = interval
+        self.unit = unit
+
+    def run(self) -> None:
+        try:
+            self.backend.hud_configure(
+                self.metrics, self.position, self.align, self.color,
+                self.badges, self.interval, self.unit,
+            )
+        except BackendError as e:
+            self.finished.emit(False, str(e))
+            return
+        self.finished.emit(
+            True, f"HUD applied ({len(self.metrics)} metrics, push every {self.interval}s)"
+        )
+
+
+class HudClearWorker(_BaseWorker):
+    def __init__(self, backend: Backend):
+        super().__init__()
+        self.backend = backend
+
+    def run(self) -> None:
+        try:
+            self.backend.hud_clear()
+        except BackendError as e:
+            self.finished.emit(False, str(e))
+            return
+        self.finished.emit(True, "HUD cleared")
+
+
 # QObjects without a Qt parent and no Python reference get garbage-collected by
 # PySide6 before their slots run. We anchor every in-flight worker/thread pair
 # on a QObject's _active_jobs set so the Python refs survive until completion.

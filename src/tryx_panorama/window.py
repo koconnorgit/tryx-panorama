@@ -3,11 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QColor
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
+    QColorDialog,
+    QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -16,14 +21,24 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
+    QSizePolicy,
     QSlider,
+    QSpinBox,
     QStatusBar,
     QVBoxLayout,
     QWidget,
 )
 
-from tryx_panorama.backend import Backend, BackendError, DeviceInfo
-from tryx_panorama.workers import DeleteWorker, DisplayWorker, UploadWorker, run_worker
+from tryx_panorama.backend import HUD_LABELS, Backend, BackendError, DeviceInfo, HudState
+from tryx_panorama.workers import (
+    DeleteWorker,
+    DisplayWorker,
+    HudClearWorker,
+    HudConfigureWorker,
+    UploadWorker,
+    run_worker,
+)
 
 MEDIA_FILTER = (
     "Media files (*.mp4 *.mov *.webm *.mkv *.avi *.gif *.png *.jpg *.jpeg *.bmp);;"
@@ -32,6 +47,17 @@ MEDIA_FILTER = (
     "GIFs (*.gif);;"
     "All files (*)"
 )
+
+HUD_MAX_METRICS = 3
+
+# 3×3 grid cell → (firmware position, firmware align).
+# Laid out so clicking "top-left" picks Top/Left, visually matching where the
+# overlay will render on the display.
+HUD_PLACEMENT_GRID: list[list[tuple[str, str]]] = [
+    [("Top", "Left"),    ("Top", "Center"),    ("Top", "Right")],
+    [("Center", "Left"), ("Center", "Center"), ("Center", "Right")],
+    [("Bottom", "Left"), ("Bottom", "Center"), ("Bottom", "Right")],
+]
 
 
 class MainWindow(QMainWindow):
@@ -43,7 +69,7 @@ class MainWindow(QMainWindow):
         self._busy = False
 
         self.setWindowTitle("Tryx Panorama")
-        self.resize(620, 520)
+        self.resize(680, 820)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -54,6 +80,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_device_group())
         root.addWidget(self._build_media_group(), 1)
         root.addWidget(self._build_display_group())
+        root.addWidget(self._build_hud_group())
         root.addWidget(self._build_daemon_group())
 
         self.setStatusBar(QStatusBar())
@@ -130,6 +157,126 @@ class MainWindow(QMainWindow):
         form.addRow("Aspect:", self.chk_square)
         return g
 
+    def _build_hud_group(self) -> QGroupBox:
+        g = QGroupBox("System HUD overlay")
+        root = QVBoxLayout(g)
+
+        # Metrics: 13 checkboxes in a 3-column grid. Hard-capped at 3 selected.
+        metrics_label = QLabel(f"Metrics (pick up to {HUD_MAX_METRICS}):")
+        root.addWidget(metrics_label)
+
+        metrics_frame = QFrame()
+        metrics_grid = QGridLayout(metrics_frame)
+        metrics_grid.setContentsMargins(0, 0, 0, 0)
+        self._hud_metric_boxes: dict[str, QCheckBox] = {}
+        cols = 3
+        for i, label in enumerate(HUD_LABELS):
+            cb = QCheckBox(label)
+            cb.toggled.connect(self._on_hud_metric_toggled)
+            metrics_grid.addWidget(cb, i // cols, i % cols)
+            self._hud_metric_boxes[label] = cb
+        root.addWidget(metrics_frame)
+
+        self.lbl_hud_metric_count = QLabel(f"Selected: 0 / {HUD_MAX_METRICS}")
+        self.lbl_hud_metric_count.setStyleSheet("color: #888;")
+        root.addWidget(self.lbl_hud_metric_count)
+
+        # Render order is fixed by the cooler firmware, not by what we send —
+        # we verified this empirically. Show a read-only list so the user can
+        # see which metrics are currently selected without implying we control
+        # the arrangement.
+        order_note = QLabel(
+            "Render order on the LCD is determined by the cooler firmware."
+        )
+        order_note.setStyleSheet("color: #888; font-style: italic;")
+        order_note.setWordWrap(True)
+        root.addWidget(order_note)
+
+        # Placement + look row: 3×3 grid on the left, color/badges/interval/unit on the right.
+        settings_row = QHBoxLayout()
+        root.addLayout(settings_row)
+
+        # Placement grid, styled to loosely resemble a 2:1 display.
+        placement_box = QGroupBox("Placement")
+        placement_lay = QVBoxLayout(placement_box)
+        grid_frame = QFrame()
+        grid_frame.setFrameShape(QFrame.StyledPanel)
+        grid_frame.setMinimumSize(180, 90)
+        grid_frame.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        placement_grid = QGridLayout(grid_frame)
+        placement_grid.setContentsMargins(4, 4, 4, 4)
+        placement_grid.setSpacing(2)
+        self._hud_placement_group = QButtonGroup(self)
+        self._hud_placement_buttons: dict[tuple[str, str], QRadioButton] = {}
+        for r, row in enumerate(HUD_PLACEMENT_GRID):
+            for c, (pos, align) in enumerate(row):
+                rb = QRadioButton()
+                rb.setToolTip(f"{pos} {align}")
+                rb.setFixedSize(40, 20)
+                placement_grid.addWidget(rb, r, c, Qt.AlignCenter)
+                self._hud_placement_group.addButton(rb)
+                self._hud_placement_buttons[(pos, align)] = rb
+        # Default: Top / Left
+        self._hud_placement_buttons[("Top", "Left")].setChecked(True)
+        placement_lay.addWidget(grid_frame)
+        settings_row.addWidget(placement_box)
+
+        # Right column: color, badges, interval, unit
+        right_col = QVBoxLayout()
+        settings_row.addLayout(right_col, 1)
+
+        color_row = QHBoxLayout()
+        color_row.addWidget(QLabel("Color:"))
+        self.btn_hud_color = QPushButton("")
+        self.btn_hud_color.setFixedWidth(60)
+        self._hud_color = "#FFFFFF"
+        self._apply_color_swatch()
+        self.btn_hud_color.clicked.connect(self._choose_hud_color)
+        color_row.addWidget(self.btn_hud_color)
+        color_row.addStretch(1)
+        right_col.addLayout(color_row)
+
+        badges_row = QHBoxLayout()
+        self.chk_hud_cpu_badge = QCheckBox("CPU name badge")
+        self.chk_hud_gpu_badge = QCheckBox("GPU name badge")
+        badges_row.addWidget(self.chk_hud_cpu_badge)
+        badges_row.addWidget(self.chk_hud_gpu_badge)
+        badges_row.addStretch(1)
+        right_col.addLayout(badges_row)
+
+        interval_row = QHBoxLayout()
+        interval_row.addWidget(QLabel("Push every:"))
+        self.spin_hud_interval = QSpinBox()
+        self.spin_hud_interval.setRange(1, 60)
+        self.spin_hud_interval.setValue(5)
+        self.spin_hud_interval.setSuffix(" s")
+        interval_row.addWidget(self.spin_hud_interval)
+        interval_row.addWidget(QLabel("Temp unit:"))
+        self.combo_hud_unit = QComboBox()
+        self.combo_hud_unit.addItems(["Celsius", "Fahrenheit"])
+        interval_row.addWidget(self.combo_hud_unit)
+        interval_row.addStretch(1)
+        right_col.addLayout(interval_row)
+
+        right_col.addStretch(1)
+
+        # Bottom: Apply / Clear / status
+        action_row = QHBoxLayout()
+        self.btn_hud_apply = QPushButton("Apply HUD")
+        self.btn_hud_apply.clicked.connect(self._apply_hud)
+        self.btn_hud_clear = QPushButton("Clear HUD")
+        self.btn_hud_clear.clicked.connect(self._clear_hud)
+        action_row.addWidget(self.btn_hud_apply)
+        action_row.addWidget(self.btn_hud_clear)
+        action_row.addStretch(1)
+        root.addLayout(action_row)
+
+        self.lbl_hud_state = QLabel("HUD: unknown")
+        self.lbl_hud_state.setStyleSheet("color: #888;")
+        root.addWidget(self.lbl_hud_state)
+
+        return g
+
     def _build_daemon_group(self) -> QGroupBox:
         g = QGroupBox("Keepalive daemon")
         row = QHBoxLayout(g)
@@ -150,6 +297,7 @@ class MainWindow(QMainWindow):
         self.refresh_device()
         self.refresh_media()
         self.refresh_daemon_status()
+        self.refresh_hud()
 
     def refresh_device(self) -> None:
         try:
@@ -258,6 +406,152 @@ class MainWindow(QMainWindow):
             self.refresh_media()
         else:
             QMessageBox.warning(self, "Delete failed", msg)
+
+    # ---------- HUD ----------
+    def _selected_hud_metrics(self) -> list[str]:
+        """Checked metrics in HUD_LABELS iteration order. Firmware ignores array
+        order when rendering, so we just send them in a stable order."""
+        return [l for l, cb in self._hud_metric_boxes.items() if cb.isChecked()]
+
+    def _on_hud_metric_toggled(self) -> None:
+        """Enforce the firmware's 3-metric cap by disabling unchecked boxes once 3 are picked."""
+        count = sum(1 for cb in self._hud_metric_boxes.values() if cb.isChecked())
+        self.lbl_hud_metric_count.setText(f"Selected: {count} / {HUD_MAX_METRICS}")
+        cap_reached = count >= HUD_MAX_METRICS
+        for cb in self._hud_metric_boxes.values():
+            if not cb.isChecked():
+                cb.setEnabled(not cap_reached)
+
+    def _apply_color_swatch(self) -> None:
+        self.btn_hud_color.setText(self._hud_color)
+        # Pick a contrasting text color so the hex stays readable.
+        c = QColor(self._hud_color)
+        luminance = 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+        fg = "#000000" if luminance > 140 else "#FFFFFF"
+        self.btn_hud_color.setStyleSheet(
+            f"background-color: {self._hud_color}; color: {fg};"
+        )
+
+    def _choose_hud_color(self) -> None:
+        color = QColorDialog.getColor(QColor(self._hud_color), self, "HUD text color")
+        if not color.isValid():
+            return
+        self._hud_color = color.name().upper()
+        self._apply_color_swatch()
+
+    def _selected_placement(self) -> tuple[str, str]:
+        for key, rb in self._hud_placement_buttons.items():
+            if rb.isChecked():
+                return key
+        return ("Top", "Left")
+
+    def _apply_hud(self) -> None:
+        metrics = self._selected_hud_metrics()
+        if not metrics:
+            self.statusBar().showMessage("Select at least one metric.", 4000)
+            return
+        if self._busy:
+            self.statusBar().showMessage("Another operation is in progress.", 4000)
+            return
+        position, align = self._selected_placement()
+        badges = []
+        if self.chk_hud_cpu_badge.isChecked():
+            badges.append("cpu")
+        if self.chk_hud_gpu_badge.isChecked():
+            badges.append("gpu")
+
+        self._busy = True
+        self.statusBar().showMessage("Applying HUD…")
+        worker = HudConfigureWorker(
+            self.backend,
+            metrics=metrics,
+            position=position,
+            align=align,
+            color=self._hud_color,
+            badges=badges,
+            interval=self.spin_hud_interval.value(),
+            unit=self.combo_hud_unit.currentText(),
+        )
+        run_worker(self, worker, self._hud_apply_done)
+
+    def _hud_apply_done(self, ok: bool, msg: str) -> None:
+        self._busy = False
+        self.statusBar().showMessage(msg, 6000)
+        if not ok:
+            QMessageBox.warning(self, "HUD apply failed", msg)
+            return
+        # Restart the daemon so it picks up the new push interval / metric set.
+        # Harmless flicker; same pattern as other applied state changes.
+        try:
+            self.backend.daemon_restart()
+        except BackendError as e:
+            self.statusBar().showMessage(f"HUD saved but daemon restart failed: {e}", 6000)
+        self.refresh_hud()
+
+    def _clear_hud(self) -> None:
+        if self._busy:
+            return
+        self._busy = True
+        self.statusBar().showMessage("Clearing HUD…")
+        worker = HudClearWorker(self.backend)
+        run_worker(self, worker, self._hud_clear_done)
+
+    def _hud_clear_done(self, ok: bool, msg: str) -> None:
+        self._busy = False
+        self.statusBar().showMessage(msg, 6000)
+        if not ok:
+            QMessageBox.warning(self, "HUD clear failed", msg)
+            return
+        try:
+            self.backend.daemon_restart()
+        except BackendError as e:
+            self.statusBar().showMessage(f"HUD cleared but daemon restart failed: {e}", 6000)
+        self.refresh_hud()
+
+    def refresh_hud(self) -> None:
+        try:
+            state = self.backend.hud_status()
+        except BackendError as e:
+            self.statusBar().showMessage(f"HUD status failed: {e}", 6000)
+            return
+        self._hydrate_hud_controls(state)
+
+    def _hydrate_hud_controls(self, state: HudState) -> None:
+        for label, cb in self._hud_metric_boxes.items():
+            cb.blockSignals(True)
+            cb.setChecked(label in state.metrics)
+            cb.blockSignals(False)
+        self._on_hud_metric_toggled()
+
+        # Placement
+        key = (state.position, state.align)
+        if key in self._hud_placement_buttons:
+            self._hud_placement_buttons[key].setChecked(True)
+
+        # Color
+        self._hud_color = state.color or "#FFFFFF"
+        self._apply_color_swatch()
+
+        # Badges
+        self.chk_hud_cpu_badge.setChecked("CPU Badge" in state.badges)
+        self.chk_hud_gpu_badge.setChecked("GPU Badge" in state.badges)
+
+        # Interval / unit
+        self.spin_hud_interval.setValue(state.push_interval_sec)
+        idx = self.combo_hud_unit.findText(state.temperature_unit)
+        if idx >= 0:
+            self.combo_hud_unit.setCurrentIndex(idx)
+
+        # Status line
+        if state.enabled and state.metrics:
+            pretty = ", ".join(state.metrics)
+            self.lbl_hud_state.setText(
+                f"HUD: on · {pretty} · {state.position}/{state.align} · every {state.push_interval_sec}s"
+            )
+            self.lbl_hud_state.setStyleSheet("color: #33cc66;")
+        else:
+            self.lbl_hud_state.setText("HUD: off")
+            self.lbl_hud_state.setStyleSheet("color: #888;")
 
     def _apply_brightness(self) -> None:
         value = self.slider_brightness.value()
