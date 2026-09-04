@@ -56,8 +56,12 @@ chmod 0755 "$LAUNCHER"
 echo "Installed: $LAUNCHER"
 
 log "Installing .desktop launcher"
-install -Dm 0644 "$REPO_DIR/data/tryx-panorama.desktop" \
-    "$HOME/.local/share/applications/tryx-panorama.desktop"
+# Use an absolute Exec path: desktop launchers inherit the session's PATH,
+# which often lacks ~/.local/bin.
+mkdir -p "$HOME/.local/share/applications"
+sed "s|^Exec=.*|Exec=$LAUNCHER|" "$REPO_DIR/data/tryx-panorama.desktop" \
+    > "$HOME/.local/share/applications/tryx-panorama.desktop"
+chmod 0644 "$HOME/.local/share/applications/tryx-panorama.desktop"
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 fi
